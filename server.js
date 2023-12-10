@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5004;
 
 app.use(cors());
 app.use(express.json());
-
+app.use(express.static('public'));
 
 const pool = mysql.createPool({
   host: process.env.HOST_URL,
@@ -24,12 +24,14 @@ const pool = mysql.createPool({
 });
 
 app.post('/api/register', async (req, res) => {
+  console.log('register progres');
   try {
     const { email, password, name } = req.body;
     const connection = await pool.getConnection();
     await connection.execute('INSERT INTO users (email, password, name) VALUES (?, ?, ?)', [email, password, name]);
     connection.release();
     res.json({ success: true, message: 'Registration successful' });
+    console.log('registered');
   } catch (error) {
     console.error('Error registering user:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
@@ -37,6 +39,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
+  console.log('login progres');
   try {
     const { email, password } = req.body;
     const connection = await pool.getConnection();
@@ -45,6 +48,7 @@ app.post('/api/login', async (req, res) => {
 
     if (results.length > 0) {
       res.json({ success: true, message: 'Login successful', userId: results[0].id, name: results[0].name });
+      console.log('loged', email);
     } else {
       res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
@@ -54,7 +58,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-
 // Set up multer storage
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -63,10 +66,23 @@ app.post('/api/saveRecording/:userId', upload.single('audioBlob'), async (req, r
   const { userId } = req.params;
   const audioBlob = req.file.buffer;
 
+
+  const filename = userId + "_" + Date.now()
+  const filePathUserId = `/public/recordings/${userId}`;
+
+  //check if folder exists
+  try {
+    //return error if it doesn't exists
+    await fs.access("." + filePathUserId, fs.constants.F_OK);
+  } catch (error) {
+    //create directory
+    await fs.mkdir("." + filePathUserId, { recursive: true });
+  }
+
   try {
     // Save the recording file
-    const filename = userId + "_" + Date.now()
-    const filePath = `/recordings/${filename}.wav`;
+
+    const filePath = `${filePathUserId}/${filename}.wav`;
     await fs.writeFile("." + filePath, audioBlob);
 
     // Save the recording information to the database
@@ -78,30 +94,18 @@ app.post('/api/saveRecording/:userId', upload.single('audioBlob'), async (req, r
   } catch (error) {
     console.error('Error saving recording:', error);
     // If there's an error, delete the file
-    if (req.file) {
+    try {
+      //delete created file if exists and is insert into table recording didn't work
+      await fs.access("." + filePath, fs.constants.F_OK);
+    } catch (error) {
       await fs.unlink(req.file.path);
+      await fs.unlink("." + filePath);
     }
     res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });
 
-
-app.get('/api/getUserRecordings', async (req, res) => {
-  try {
-
-
-    const fileName = "." + req.headers.pathfile;
-    const filePath = path.join(__dirname, fileName);
-    res.sendFile(filePath);
-
-
-  } catch (error) {
-    console.error('Error getting user recordings:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.get('/api/getUserRecordingsUrls/:userId', async (req, res) => {
+app.get('/api/recordings/:userId', async (req, res) => {
   try {
     const userId = req.params.userId;
     const connection = await pool.getConnection();
@@ -114,19 +118,20 @@ app.get('/api/getUserRecordingsUrls/:userId', async (req, res) => {
   }
 });
 
-app.delete('/api/deleteRecording/recordings/:filename', async (req, res) => {
+app.delete('/api/recording/:userId/:filename', async (req, res) => {
   try {
     const filename = req.params.filename.split(".")[0];
+    const userId = req.params.userId;
     const connection = await pool.getConnection();
 
     // Delete recording from the database
-    const [deleteResult] = await connection.execute('DELETE FROM recordings WHERE filename = ?', [filename]);
+    const [deleteResult] = await connection.execute('DELETE FROM recordings WHERE user_id = ? AND filename = ?', [userId, filename]);
     connection.release();
 
     if (deleteResult.affectedRows > 0) {
       // Delete the associated file
       try {
-        await fs.unlink("./recordings/" + filename + ".wav");
+        await fs.unlink(`./public/recordings/${userId}/${filename}.wav`);
         res.json({ success: true, message: 'Recording deleted successfully' });
       } catch (fileError) {
         console.error('Error deleting file:', fileError);
