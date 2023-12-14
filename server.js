@@ -31,7 +31,7 @@ app.post('/api/register', async (req, res) => {
     await connection.execute('INSERT INTO users (email, password, name) VALUES (?, ?, ?)', [email, password, name]);
     connection.release();
     res.json({ success: true, message: 'Registration successful' });
-    console.log('registered');
+    console.log('registered', email);
   } catch (error) {
     console.error('Error registering user:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
